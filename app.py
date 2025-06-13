@@ -8,6 +8,16 @@ from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 import time
 
+# Sidebar control
+refresh = st.sidebar.checkbox("🔁 Auto-refresh every 60 seconds", value=False)
+
+# Refresh logic
+if refresh:
+    st.sidebar.warning("Refreshing in 60 seconds...")
+    time.sleep(60)
+    st.experimental_rerun()
+
+
 # Streamlit page configuration
 st.set_page_config(page_title="DNS Anomaly Detection Dashboard", layout="wide")
 
