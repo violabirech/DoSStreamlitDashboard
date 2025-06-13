@@ -22,7 +22,7 @@ st.title("🚨 Real-Time DNS Anomaly Detection")
 # --- InfluxDB client ---
 client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
 query_api = client.query_api()
-from influxdb_client import WriteOptions
+from InfluxDBClient import WriteOptions
 write_api = client.write_api(write_options=WriteOptions(batch_size=1))
 
 
