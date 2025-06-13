@@ -1,13 +1,10 @@
-pip install influxdb-client
-
-
 import streamlit as st
 import pandas as pd
 import time
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
-from influxdb_client import InfluxDBClient, Point, WritePrecision
+from influxdb_client import InfluxDBClient, Point, WritePrecision, WriteOptions  # ✅ FIXED HERE
 
 # --- CONFIG ---
 INFLUXDB_URL = "https://us-east-1-1.aws.cloud2.influxdata.com"
@@ -22,9 +19,7 @@ st.title("🚨 Real-Time DNS Anomaly Detection")
 # --- InfluxDB client ---
 client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
 query_api = client.query_api()
-from InfluxDBClient import WriteOptions
-write_api = client.write_api(write_options=WriteOptions(batch_size=1))
-
+write_api = client.write_api(write_options=WriteOptions(batch_size=1))  # ✅ FIXED
 
 @st.cache_resource
 def load_model():
@@ -46,7 +41,7 @@ def fetch_dns_data():
     '''
     try:
         df = query_api.query_data_frame(org=INFLUXDB_ORG, query=query)
-        if isinstance(df, list):  # if multiple tables returned
+        if isinstance(df, list):
             df = pd.concat(df, ignore_index=True)
         if not df.empty:
             df.columns = [col[1] if isinstance(col, tuple) else col for col in df.columns]
