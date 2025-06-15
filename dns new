@@ -19,16 +19,17 @@ INFLUXDB_ORG = "Anormally Detection"
 INFLUXDB_BUCKET = "realtime"
 INFLUXDB_MEASUREMENT = "network_traffic"
 
-# --- Sidebar Controls ---
-st.sidebar.title("Controls")
-time_window = "-7d"  # fixed to 7 days
-threshold = st.sidebar.slider("Anomaly Threshold", 0.01, 1.0, 0.1, 0.01)
-debug_mode = st.sidebar.checkbox("Show Debug Info", value=False)
+# --- Sidebar Settings ---
+st.sidebar.header("Settings")
+st.session_state.highlight_color = st.sidebar.selectbox("Anomaly Highlight Color", ["Red", "Orange", "Yellow"], index=0)
+enable_alerts = st.sidebar.checkbox("Enable Discord Alerts", value=True)
+highlight_rows = st.sidebar.checkbox("Highlight Anomalies", value=True)
 
-# --- Title ---
-st.title("🚀 DoS Anomaly Detection Dashboard")
+# --- Tabs ---
+tabs = st.tabs(["🏠 Overview", "📡 Live Stream", "🛠 Manual Entry", "📊 Metrics & Alerts"])
 
 # --- InfluxDB Query ---
+time_window = "-7d"
 client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
 query_api = client.query_api()
 query = f'''
@@ -41,70 +42,93 @@ from(bucket: "{INFLUXDB_BUCKET}")
   |> limit(n:200)
 '''
 
-try:
-    df = query_api.query_data_frame(org=INFLUXDB_ORG, query=query)
-    if isinstance(df, list):
-        df = pd.concat(df, ignore_index=True)
+# --- Fetch Data ---
+df = query_api.query_data_frame(org=INFLUXDB_ORG, query=query)
+if isinstance(df, list):
+    df = pd.concat(df, ignore_index=True)
 
-    if df.empty or "packet_length" not in df.columns or "inter_arrival_time" not in df.columns:
-        st.warning("⚠️ No valid data with required fields found in InfluxDB.")
-    else:
-        payloads = df[["inter_arrival_time", "packet_length"]].dropna().to_dict(orient="records")
-        predictions = []
-        for (index, row), payload in zip(df.iterrows(), payloads):
-            try:
-                response = requests.post(API_URL, json=payload, timeout=8)
-                result = response.json()
-                result.update({
-                    "timestamp": row["_time"],
-                    "inter_arrival_time": payload["inter_arrival_time"],
-                    "packet_length": payload["packet_length"],
-                    "label": row.get("label")
-                })
-                predictions.append(result)
-            except Exception as e:
-                if debug_mode:
-                    st.error(f"API error at index {index}: {e}")
-                continue
+# --- Handle No Data ---
+if df.empty or "packet_length" not in df.columns or "inter_arrival_time" not in df.columns:
+    tabs[1].warning("⚠️ No valid data found.")
+else:
+    payloads = df[["inter_arrival_time", "packet_length"]].dropna().to_dict("records")
+    predictions = []
+    for (index, row), payload in zip(df.iterrows(), payloads):
+        try:
+            response = requests.post(API_URL, json=payload, timeout=8)
+            result = response.json()
+            result.update({
+                "timestamp": row["_time"],
+                "inter_arrival_time": payload["inter_arrival_time"],
+                "packet_length": payload["packet_length"],
+                "label": row.get("label")
+            })
+            predictions.append(result)
+        except:
+            continue
 
-        if predictions:
-            df_pred = pd.DataFrame(predictions)
-            df_pred["timestamp"] = pd.to_datetime(df_pred["timestamp"])
+    df_pred = pd.DataFrame(predictions)
+    df_pred["timestamp"] = pd.to_datetime(df_pred["timestamp"])
 
-            # --- Metrics ---
-            st.subheader("📊 Model Metrics")
-            valid = df_pred.dropna(subset=["label", "anomaly"])
-            if not valid.empty:
-                y_true = valid["label"].astype(int)
-                y_pred = valid["anomaly"].astype(int)
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Accuracy", f"{accuracy_score(y_true, y_pred)*100:.2f}%")
-                col2.metric("Precision", f"{precision_score(y_true, y_pred, zero_division=0)*100:.2f}%")
-                col3.metric("Recall", f"{recall_score(y_true, y_pred, zero_division=0)*100:.2f}%")
-                col4.metric("F1 Score", f"{f1_score(y_true, y_pred, zero_division=0)*100:.2f}%")
+    # --- Overview ---
+    with tabs[0]:
+        st.title("🚀 DoS Anomaly Detection Dashboard")
+        st.markdown("Analyze real-time DoS traffic using ML prediction API and live visualization.")
 
-                cm = confusion_matrix(y_true, y_pred)
-                fig_cm = ff.create_annotated_heatmap(
-                    z=cm,
-                    x=["Pred Normal", "Pred Attack"],
-                    y=["Actual Normal", "Actual Attack"],
-                    annotation_text=cm.astype(str),
-                    colorscale="Blues"
-                )
-                st.plotly_chart(fig_cm, use_container_width=True)
-
-            # --- Visuals ---
-            st.subheader("📈 Time Series View")
-            fig = px.line(df_pred, x="timestamp", y="reconstruction_error", color="anomaly",
-                          color_discrete_map={0: "blue", 1: "red"},
-                          title="Reconstruction Error Over Time")
-            fig.add_hline(y=threshold, line_dash="dash", line_color="green", annotation_text="Threshold")
-            st.plotly_chart(fig, use_container_width=True)
-
-            st.subheader("🔍 Prediction Table")
-            st.dataframe(df_pred[["timestamp", "inter_arrival_time", "packet_length", "reconstruction_error", "anomaly"]])
-
+    # --- Live Stream ---
+    with tabs[1]:
+        st.subheader("📡 Real-Time Monitoring")
+        if highlight_rows and "anomaly" in df_pred.columns:
+            highlight_color = st.session_state.highlight_color.lower()
+            def highlight(df):
+                return [f"background-color: {highlight_color}" if v == 1 else "" for v in df["anomaly"]]
+            st.dataframe(df_pred.style.apply(highlight, axis=1))
         else:
-            st.info("📭 No predictions returned from the model.")
-except Exception as e:
-    st.error(f"❌ Failed to load or process DoS data: {e}")
+            st.dataframe(df_pred)
+
+    # --- Manual Entry ---
+    with tabs[2]:
+        st.subheader("🛠 Manual Input")
+        col1, col2 = st.columns(2)
+        with col1:
+            inter_arrival = st.number_input("Inter Arrival Time (sec)", 0.001, 10.0, 0.02)
+        with col2:
+            packet_length = st.number_input("Packet Length", 1, 5000, 512)
+
+        if st.button("Predict Anomaly"):
+            payload = {"inter_arrival_time": inter_arrival, "packet_length": packet_length}
+            try:
+                r = requests.post(API_URL, json=payload)
+                res = r.json()
+                st.success("Prediction result:")
+                st.json(res)
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+    # --- Metrics & Alerts ---
+    with tabs[3]:
+        st.subheader("📊 Model Performance")
+        valid = df_pred.dropna(subset=["label", "anomaly"])
+        if not valid.empty:
+            y_true = valid["label"].astype(int)
+            y_pred = valid["anomaly"].astype(int)
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Accuracy", f"{accuracy_score(y_true, y_pred)*100:.2f}%")
+            col2.metric("Precision", f"{precision_score(y_true, y_pred, zero_division=0)*100:.2f}%")
+            col3.metric("Recall", f"{recall_score(y_true, y_pred, zero_division=0)*100:.2f}%")
+            col4.metric("F1 Score", f"{f1_score(y_true, y_pred, zero_division=0)*100:.2f}%")
+
+            cm = confusion_matrix(y_true, y_pred)
+            fig_cm = ff.create_annotated_heatmap(
+                z=cm,
+                x=["Pred Normal", "Pred Attack"],
+                y=["Actual Normal", "Actual Attack"],
+                annotation_text=cm.astype(str),
+                colorscale="Blues"
+            )
+            st.plotly_chart(fig_cm, use_container_width=True)
+
+        st.subheader("📈 Reconstruction Error")
+        fig = px.line(df_pred, x="timestamp", y="reconstruction_error", color="anomaly",
+                      color_discrete_map={0: "blue", 1: "red"})
+        st.plotly_chart(fig, use_container_width=True)
